@@ -4,6 +4,8 @@ module Searchkick
       options = @options
       language = options[:language]
       language = language.call if language.respond_to?(:call)
+      type = options[:_type] || :_default_
+      type = type.call if type.respond_to?(:call)
 
       if options[:mappings] && !options[:merge_mappings]
         settings = options[:settings] || {}
@@ -162,11 +164,6 @@ module Searchkick
           settings[:similarity] = {default: {type: options[:similarity]}}
         end
 
-        unless below60
-          settings[:mapping] ||= {}
-          settings[:mapping][:single_type] = false
-        end
-
         settings.deep_merge!(options[:settings] || {})
 
         # synonyms
@@ -188,7 +185,7 @@ module Searchkick
           # - Only apply the synonym expansion at index time
           # - Don't have the synonym filter applied search
           # - Use directional synonyms where appropriate. You want to make sure that you're not injecting terms that are too general.
-          settings[:analysis][:analyzer][default_analyzer][:filter].insert(4, "searchkick_synonym")
+          settings[:analysis][:analyzer][default_analyzer][:filter].insert(4, "searchkick_synonym") if below60
           settings[:analysis][:analyzer][default_analyzer][:filter] << "searchkick_synonym"
 
           %w(word_start word_middle word_end).each do |type|
@@ -280,6 +277,10 @@ module Searchkick
           mapping[field] = shape_options.merge(type: "geo_shape")
         end
 
+        if options[:inheritance]
+          mapping[:type] = keyword_mapping
+        end
+
         routing = {}
         if options[:routing]
           routing = {required: true}
@@ -318,7 +319,7 @@ module Searchkick
         multi_field = dynamic_fields["{name}"].merge(fields: dynamic_fields.except("{name}"))
 
         mappings = {
-          _default_: {
+          type => {
             properties: mapping,
             _routing: routing,
             # https://gist.github.com/kimchy/2898285
@@ -336,7 +337,7 @@ module Searchkick
 
         if below60
           all_enabled = all && (!options[:searchable] || options[:searchable].to_a.map(&:to_s).include?("_all"))
-          mappings[:_default_][:_all] = all_enabled ? analyzed_field_options : {enabled: false}
+          mappings[type][:_all] = all_enabled ? analyzed_field_options : {enabled: false}
         end
 
         mappings = mappings.deep_merge(options[:mappings] || {})

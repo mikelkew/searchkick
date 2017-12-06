@@ -1,8 +1,8 @@
 module Searchkick
   module Model
     def searchkick(**options)
-      unknown_keywords = options.keys - [:_all, :batch_size, :callbacks, :conversions, :default_fields,
-        :filterable, :geo_shape, :highlight, :ignore_above, :index_name, :index_prefix, :language,
+      unknown_keywords = options.keys - [:_all, :_type, :batch_size, :callbacks, :conversions, :default_fields,
+        :filterable, :geo_shape, :highlight, :ignore_above, :index_name, :index_prefix, :inheritance, :language,
         :locations, :mappings, :match, :merge_mappings, :routing, :searchable, :settings, :similarity,
         :special_characters, :stem_conversions, :suggest, :synonyms, :text_end,
         :text_middle, :text_start, :word, :wordnet, :word_end, :word_middle, :word_start]
@@ -11,6 +11,8 @@ module Searchkick
       raise "Only call searchkick once per model" if respond_to?(:searchkick_index)
 
       Searchkick.models << self
+
+      options[:_type] ||= -> { searchkick_index.klass_document_type(self, true) } if options[:inheritance]
 
       class_eval do
         cattr_reader :searchkick_options, :searchkick_klass
@@ -22,7 +24,7 @@ module Searchkick
         class_variable_set :@@searchkick_callbacks, callbacks
         class_variable_set :@@searchkick_index, options[:index_name] ||
           (options[:index_prefix].respond_to?(:call) && proc { [options[:index_prefix].call, model_name.plural, Searchkick.env, Searchkick.index_suffix].compact.join("_") }) ||
-          [options[:index_prefix], model_name.plural, Searchkick.env, Searchkick.index_suffix].compact.join("_")
+          [options.key?(:index_prefix) ? options[:index_prefix] : Searchkick.index_prefix, model_name.plural, Searchkick.env, Searchkick.index_suffix].compact.join("_")
 
         class << self
           def searchkick_search(term = "*", **options, &block)
