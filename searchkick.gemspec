@@ -18,11 +18,13 @@ Gem::Specification.new do |spec|
   spec.test_files    = spec.files.grep(%r{^(test|spec|features|benchmark)/})
   spec.require_paths = ["lib"]
 
-  spec.add_dependency "activemodel", ">= 4.1"
-  spec.add_dependency "elasticsearch", ">= 1"
+  spec.required_ruby_version = ">= 2.2.0"
+
+  spec.add_dependency "activemodel", ">= 4.2"
+  spec.add_dependency "elasticsearch", ">= 5"
   spec.add_dependency "hashie"
 
   spec.add_development_dependency "bundler"
-  spec.add_development_dependency "rake"
   spec.add_development_dependency "minitest"
+  spec.add_development_dependency "rake"
 end

@@ -18,6 +18,13 @@ class MatchTest < Minitest::Test
     assert_search "pepperjack cheese skewers", ["Pepper Jack Cheese Skewers"]
   end
 
+  def test_operator
+    store_names ["fresh", "honey"]
+    assert_search "fresh honey", ["fresh", "honey"], {operator: "or"}
+    assert_search "fresh honey", [], {operator: "and"}
+    assert_search "fresh honey", ["fresh", "honey"], {operator: :or}
+  end
+
   # def test_cheese_space_in_query
   #   store_names ["Pepperjack Cheese Skewers"]
   #   assert_search "pepper jack cheese skewers", ["Pepperjack Cheese Skewers"]
@@ -114,7 +121,11 @@ class MatchTest < Minitest::Test
   def test_misspelling_zucchini_transposition
     store_names ["zucchini"]
     assert_search "zuccihni", ["zucchini"]
-    assert_search "zuccihni", [], misspellings: {transpositions: false}
+
+    # need to specify field
+    # as transposition option isn't supported for multi_match queries
+    # until Elasticsearch 6.1
+    assert_search "zuccihni", [], misspellings: {transpositions: false}, fields: [:name]
   end
 
   def test_misspelling_lasagna
@@ -173,12 +184,12 @@ class MatchTest < Minitest::Test
 
   def test_exclude_butter_exact
     store_names ["Butter Tub", "Peanut Butter Tub"]
-    assert_search "butter", [], exclude: ["peanut butter"], match: :exact
+    assert_search "butter", [], exclude: ["peanut butter"], fields: [{name: :exact}]
   end
 
   def test_exclude_same_exact
     store_names ["Butter Tub", "Peanut Butter Tub"]
-    assert_search "Butter Tub", [], exclude: ["Butter Tub"], match: :exact
+    assert_search "Butter Tub", ["Butter Tub"], exclude: ["Peanut Butter Tub"], fields: [{name: :exact}]
   end
 
   def test_exclude_egg_word_start
@@ -238,9 +249,14 @@ class MatchTest < Minitest::Test
     assert_search "fresh honey", ["Fresh Honey"], match: :phrase
   end
 
+  def test_phrase_again
+    store_names ["Social entrepreneurs don't have it easy raising capital"]
+    assert_search "social entrepreneurs don't have it easy raising capital", ["Social entrepreneurs don't have it easy raising capital"], match: :phrase
+  end
+
   def test_phrase_order
     store_names ["Wheat Bread", "Whole Wheat Bread"]
-    assert_order "wheat bread", ["Wheat Bread", "Whole Wheat Bread"], match: :phrase
+    assert_order "wheat bread", ["Wheat Bread", "Whole Wheat Bread"], match: :phrase, fields: [:name]
   end
 
   def test_dynamic_fields
@@ -249,6 +265,7 @@ class MatchTest < Minitest::Test
   end
 
   def test_unsearchable
+    skip
     store [
       {name: "Unsearchable", description: "Almond"}
     ]

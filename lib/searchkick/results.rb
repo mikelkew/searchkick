@@ -15,40 +15,46 @@ module Searchkick
       @options = options
     end
 
-    # experimental: may not make next release
-    def records
-      @records ||= results_query(klass, hits)
+    def results
+      @results ||= with_hit.map(&:first)
     end
 
-    def results
-      @results ||= begin
+    def with_hit
+      @with_hit ||= begin
         if options[:load]
           # results can have different types
           results = {}
 
           hits.group_by { |hit, _| hit["_type"] }.each do |type, grouped_hits|
-            results[type] = results_query(type.camelize.constantize, grouped_hits).to_a.index_by { |r| r.id.to_s }
+            klass = (!options[:index_name] && @klass) || type.camelize.constantize
+            results[type] = results_query(klass, grouped_hits).to_a.index_by { |r| r.id.to_s }
           end
 
-          # sort
-          hits.map do |hit|
-            result = results[hit["_type"]][hit["_id"].to_s]
-            if result && !(options[:load].is_a?(Hash) && options[:load][:dumpable])
-              unless result.respond_to?(:search_hit)
-                result.define_singleton_method(:search_hit) do
-                  hit
-                end
-              end
+          missing_ids = []
 
-              if hit["highlight"] && !result.respond_to?(:search_highlights)
-                highlights = Hash[hit["highlight"].map { |k, v| [(options[:json] ? k : k.sub(/\.#{@options[:match_suffix]}\z/, "")).to_sym, v.first] }]
-                result.define_singleton_method(:search_highlights) do
-                  highlights
+          # sort
+          results =
+            hits.map do |hit|
+              result = results[hit["_type"]][hit["_id"].to_s]
+              if result && !(options[:load].is_a?(Hash) && options[:load][:dumpable])
+                if (hit["highlight"] || options[:highlight]) && !result.respond_to?(:search_highlights)
+                  highlights = hit_highlights(hit)
+                  result.define_singleton_method(:search_highlights) do
+                    highlights
+                  end
                 end
               end
+              [result, hit]
+            end.select do |result, hit|
+              missing_ids << hit["_id"] unless result
+              result
             end
-            result
-          end.compact
+
+          if missing_ids.any?
+            warn "[searchkick] WARNING: Records in search index do not exist in database: #{missing_ids.join(", ")}"
+          end
+
+          results
         else
           hits.map do |hit|
             result =
@@ -60,15 +66,15 @@ module Searchkick
                 hit
               end
 
-            if hit["highlight"]
-              highlight = Hash[hit["highlight"].map { |k, v| [base_field(k), v.first] }]
+            if hit["highlight"] || options[:highlight]
+              highlight = Hash[hit["highlight"].to_a.map { |k, v| [base_field(k), v.first] }]
               options[:highlighted_fields].map { |k| base_field(k) }.each do |k|
                 result["highlighted_#{k}"] ||= (highlight[k] || result[k])
               end
             end
 
             result["id"] ||= result["_id"] # needed for legacy reasons
-            Hashie::Mash.new(result)
+            [HashWrapper.new(result), hit]
           end
         end
       end
@@ -77,22 +83,10 @@ module Searchkick
     def suggestions
       if response["suggest"]
         response["suggest"].values.flat_map { |v| v.first["options"] }.sort_by { |o| -o["score"] }.map { |o| o["text"] }.uniq
+      elsif options[:term] == "*"
+        []
       else
         raise "Pass `suggest: true` to the search method for suggestions"
-      end
-    end
-
-    def each_with_hit(&block)
-      results.zip(hits).each(&block)
-    end
-
-    def with_details
-      each_with_hit.map do |model, hit|
-        details = {}
-        if hit["highlight"]
-          details[:highlight] = Hash[hit["highlight"].map { |k, v| [(options[:json] ? k : k.sub(/\.#{@options[:match_suffix]}\z/, "")).to_sym, v.first] }]
-        end
-        [model, details]
       end
     end
 
@@ -187,7 +181,23 @@ module Searchkick
     end
 
     def hits
-      @response["hits"]["hits"]
+      if error
+        raise Searchkick::Error, "Query error - use the error method to view it"
+      else
+        @response["hits"]["hits"]
+      end
+    end
+
+    def highlights(multiple: false)
+      hits.map do |hit|
+        hit_highlights(hit, multiple: multiple)
+      end
+    end
+
+    def with_highlights(multiple: false)
+      with_hit do |result, hit|
+        [result, hit_highlights(hit, multiple: multiple)]
+      end
     end
 
     def misspellings?
@@ -198,25 +208,50 @@ module Searchkick
 
     def results_query(records, hits)
       ids = hits.map { |hit| hit["_id"] }
+      if options[:includes] || options[:model_includes]
+        included_relations = []
+        combine_includes(included_relations, options[:includes])
+        combine_includes(included_relations, options[:model_includes][records]) if options[:model_includes]
 
-      if options[:includes]
         records =
           if defined?(NoBrainer::Document) && records < NoBrainer::Document
             if Gem.loaded_specs["nobrainer"].version >= Gem::Version.new("0.21")
-              records.eager_load(options[:includes])
+              records.eager_load(included_relations)
             else
-              records.preload(options[:includes])
+              records.preload(included_relations)
             end
           else
-            records.includes(options[:includes])
+            records.includes(included_relations)
           end
+      end
+
+      if options[:scope_results]
+        records = options[:scope_results].call(records)
       end
 
       Searchkick.load_records(records, ids)
     end
 
+    def combine_includes(result, inc)
+      if inc
+        if inc.is_a?(Array)
+          result.concat(inc)
+        else
+          result << inc
+        end
+      end
+    end
+
     def base_field(k)
       k.sub(/\.(analyzed|word_start|word_middle|word_end|text_start|text_middle|text_end|exact)\z/, "")
+    end
+
+    def hit_highlights(hit, multiple: false)
+      if hit["highlight"]
+        Hash[hit["highlight"].map { |k, v| [(options[:json] ? k : k.sub(/\.#{@options[:match_suffix]}\z/, "")).to_sym, multiple ? v : v.first] }]
+      else
+        {}
+      end
     end
   end
 end
